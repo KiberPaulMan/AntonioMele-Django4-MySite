@@ -1,9 +1,10 @@
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView
 from django.core.mail import send_mail
+from django.views.decorators.http import require_POST
 
-from blog.models import Post
-from blog.forms import EmailPostForm
+from blog.models import Post, Comment
+from blog.forms import EmailPostForm, CommentForm
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 
 
@@ -12,6 +13,7 @@ class PostListView(ListView):
     context_object_name = 'posts'
     paginate_by = 3
     template_name = 'blog/post/list.html'
+
 
 # def post_list(request):
 #     post_list = Post.published.all()
@@ -41,9 +43,13 @@ def post_detail(request, year, month, day, post):
                              publish__month=month,
                              publish__day=day,
                              )
+    comments = post.comments.filter(active=True)
+    form = CommentForm()
     return render(request,
                   template_name='blog/post/detail.html',
-                  context={'post': post})
+                  context={'post': post,
+                           'comments': comments,
+                           'form': form})
 
 
 def share_post(request, post_id):
@@ -56,11 +62,14 @@ def share_post(request, post_id):
         form = EmailPostForm(request.POST)
         if form.is_valid():
             cd = form.cleaned_data
-            subject = cd['name']
-            email_from = cd['email']
-            email_to = cd['to']
-            message = cd['comments']
-            send_mail(subject, message, email_from, [email_to, ])
+            post_url = request.build_absolute_uri(
+                post.get_absolute_url())
+            subject = f"{cd['name']} recommends you read " \
+                      f"{post.title}"
+            message = f"Read {post.title} at {post_url}\n\n" \
+                      f"{cd['name']}\'s comments: {cd['comments']}"
+            send_mail(subject, message, 'your_account@gmail.com',
+                      [cd['to']])
             sent = True
 
     else:
@@ -68,3 +77,18 @@ def share_post(request, post_id):
     return render(request, 'blog/post/share.html', {'post': post,
                                                     'form': form,
                                                     'sent': sent})
+
+@require_POST
+def post_comment(request, post_id):
+    post = get_object_or_404(Post,
+                             id=post_id,
+                             status=Post.Status.PUBLISHED)
+    comment = None
+    form = CommentForm(request.POST)
+    if form.is_valid():
+        comment = form.save(commit=False)
+        comment.post = post
+        comment.save()
+    return render(request, 'blog/post/comment.html', {'post': post,
+                                                      'form': form,
+                                                      'comment': comment})
